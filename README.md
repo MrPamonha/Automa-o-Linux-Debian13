@@ -10,12 +10,12 @@ Escolha um dos métodos rápidos abaixo:
 
 ### Método 1: Usando `curl`
 ```bash
-apt update && apt install -y curl && curl -sSL https://raw.githubusercontent.com/seu-usuario/seu-repositorio/main/setup.sh | bash
+apt update && apt install -y curl && curl -sSL https://raw.githubusercontent.com/MrPamonha/Automa-o-Linux-Debian13/main/setup.sh | bash
 ```
 
 ### Método 2: Usando `wget`
 ```bash
-apt update && apt install -y wget && wget -O- https://raw.githubusercontent.com/seu-usuario/seu-repositorio/main/setup.sh | bash
+apt update && apt install -y wget && wget -O- https://raw.githubusercontent.com/MrPamonha/Automa-o-Linux-Debian13/main/setup.sh | bash
 ```
 
 ### Método 3: Copiando manualmente
