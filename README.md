@@ -1,53 +1,93 @@
-# Debian 13 Trixie - Script de Pós-Instalação Automática
+# Debian 13 Trixie - Pós-Instalação Automática
 
-Este repositório contém um script Bash projetado para automatizar as tarefas pós-instalação de um sistema Debian 13 "Trixie" limpo (netinst), combinando praticidade com as melhores recomendações de produtividade do blog do Remontti.
+Dois scripts para rodar em **toda máquina Debian 13 "Trixie" nova** (VM ou container LXC, a partir do netinst), nesta ordem:
 
-## Como Executar
+| # | Script | O que faz |
+|---|---|---|
+| 1 | `setup.sh` | Relógio/NTP, repositórios, atualização, pacotes essenciais, Bash e Vim (recomendações do blog do Remontti) |
+| 2 | `ssh-hardening.sh` | Usuário nominal com chave, SSH só por chave, root bloqueado no SSH e acessível via `sudo -i` |
 
-Você pode rodar o script diretamente no terminal do seu Debian recém-instalado (como usuário `root`). 
+## Uso rápido (como `root`)
 
-Escolha um dos métodos rápidos abaixo:
-
-### Método 1: Usando `curl`
 ```bash
-apt update && apt install -y curl && curl -sSL https://raw.githubusercontent.com/MrPamonha/Automa-o-Linux-Debian13/main/setup.sh | bash
+apt update && apt install -y curl
+
+# 1) Pós-instalação
+curl -fsSL https://raw.githubusercontent.com/MrPamonha/Automa-o-Linux-Debian13/main/setup.sh | bash
+
+# 2) SSH (pergunta usuário, senha do sudo e chave)
+bash <(curl -fsSL https://raw.githubusercontent.com/MrPamonha/Automa-o-Linux-Debian13/main/ssh-hardening.sh)
 ```
 
-### Método 2: Usando `wget`
-```bash
-apt update && apt install -y wget && wget -O- https://raw.githubusercontent.com/MrPamonha/Automa-o-Linux-Debian13/main/setup.sh | bash
-```
+> Rode o `ssh-hardening.sh` pelo **console** ou por uma sessão SSH que você **não vai fechar** até testar o acesso novo.
 
-### Método 3: Copiando manualmente
-Se preferir copiar o script para a máquina antes de executar:
-```bash
-chmod +x setup.sh
-./setup.sh
-```
+Também dá para copiar os arquivos para a máquina e rodar `bash setup.sh` / `bash ssh-hardening.sh`.
 
 ---
 
-## O que o script faz?
+## 1. `setup.sh` — o que faz
 
-1. **Configuração de Relógio (Timezone & NTP)**:
-   - Permite definir o fuso horário (com timeout de 10s para não travar execuções automatizadas, padrão: `America/Sao_Paulo`).
-   - Instala e configura o `systemd-timesyncd` para garantir que o relógio permaneça sincronizado via NTP.
+1. **Relógio (fuso e NTP)**
+   - Pergunta o fuso por 10 s (padrão `America/Sao_Paulo`). Lê do terminal, então funciona também via `curl | bash`; sem terminal, usa o padrão.
+   - Instala e ativa o `systemd-timesyncd`.
+2. **Repositórios**
+   - Habilita `contrib`, `non-free` e `non-free-firmware` tanto no formato antigo (`/etc/apt/sources.list`) quanto no deb822 (`/etc/apt/sources.list.d/debian.sources`).
+   - Só mexe nas linhas do `debian.org` (repositórios de terceiros ficam intactos) e pode ser rodado várias vezes sem duplicar nada.
+3. **Atualização e utilitários**
+   - `apt update && apt dist-upgrade`.
+   - Instala: `vim`, `bash-completion`, `fzf`, `grc`, `curl`, `wget`, `unzip`, `man-db`, `htop`, `tree`, `bmon`, `hdparm`, `mtr-tiny`, `whois`, `dnsutils`, `net-tools`, `git`, `sudo`.
+4. **Terminal (Bash)**
+   - Autocomplete global, aliases coloridos (`ls`, `ll`, `l`, `grep`, `ip`, `diff`), `grc` em `tail`/`ping`/`ps`/`netstat`/`df`, `CTRL+R` com `fzf`.
+   - Prompt colorido: root em vermelho, usuários em verde.
+   - Vale para root, novos usuários (`/etc/skel`) e o usuário que chamou o script (via `sudo` ou `su -`).
+5. **Vim**: sintaxe, fundo escuro, tab de 4 espaços, indentação inteligente, números de linha.
 
-2. **Repositórios do Debian 13 Trixie**:
-   - Ajusta automaticamente o arquivo `/etc/apt/sources.list` habilitando as áreas `contrib`, `non-free` e `non-free-firmware` necessárias para firmwares proprietários e pacotes adicionais.
+---
 
-3. **Atualização & Utilitários de Sistema**:
-   - Realiza `apt update && apt dist-upgrade`.
-   - Instala: `vim`, `bash-completion`, `fzf` (buscador fuzzy), `grc` (colorizador de comandos), `curl`, `wget`, `unzip`, `man-db`, `htop`, `tree`, `bmon` (monitor de banda), `hdparm`, `mtr-tiny`, `whois`, `dnsutils`, `net-tools` e `git`.
+## 2. `ssh-hardening.sh` — o que faz
 
-4. **Tuning do Terminal (Bash)**:
-   - Ativa autocomplete avançado de comandos globalmente em `/etc/bash.bashrc`.
-   - Adiciona aliases úteis com cores (`ls`, `ll`, `l`, `grep`, `ip`, `diff`).
-   - Aplica colorização automática nas saídas dos comandos `tail`, `ping`, `ps`, `netstat` e `df` usando `grc`.
-   - Configura busca rápida no histórico de comandos com o atalho `CTRL+R` (`fzf`).
-   - Ajusta o visual do prompt (`PS1` colorido, diferenciando root em vermelho de usuários comuns em verde).
-   - Aplica estas configurações de forma que novos usuários criados no sistema (`/etc/skel/.bashrc`) e o usuário comum que chamou o script também as recebam.
+| Etapa | Detalhe |
+|---|---|
+| Pacotes | Garante `openssh-server` e `sudo` |
+| Usuário | Cria o usuário nominal (se não existir), coloca no grupo `sudo` e pede a senha dele — usada **só no `sudo -i`**, nunca no SSH |
+| Chaves | Aceita chave colada, arquivo ou URL (ex.: `https://github.com/USUARIO.keys`); valida cada uma com `ssh-keygen` e não duplica |
+| sshd | Grava `/etc/ssh/sshd_config.d/00-hardening.conf` (prioridade sobre os demais) e valida com `sshd -t` antes de aplicar |
+| Serviço | Desativa o `ssh.socket` e usa `ssh.service` com **restart** (o `reload` já derrubou o sshd em container) |
+| Teste | Pede para você testar numa sessão nova e digitar `ok` em até 180 s — **sem confirmação, desfaz sozinho** |
 
-5. **Tuning do Editor VIM**:
-   - Ativa realce de sintaxe (`syntax on`) e fundo escuro.
-   - Ajusta tabulações para 4 espaços e ativa indentação inteligente globalmente e em `/etc/skel/.vimrc`.
+**Configuração aplicada:** `PermitRootLogin no`, `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `AuthenticationMethods publickey`, `MaxAuthTries 3`, `LoginGraceTime 30`, `X11Forwarding no`, `ClientAliveInterval 300`.
+
+### Proteções contra se trancar fora
+- Sem nenhuma chave válida no `authorized_keys`, **não altera nada** no SSH.
+- Se o `sshd -t` reprovar, nada é aplicado.
+- Backup do `sshd_config` e do `sshd_config.d` em `/root/ssh-hardening-backup-<data>/`.
+- Rollback automático se o serviço não subir ou se o acesso não for confirmado.
+- Sessões já abertas continuam vivas durante o restart.
+
+### Opções
+
+```text
+-u, --user NOME        Usuário nominal (criado se não existir)
+-k, --key "CHAVE"      Chave pública (pode repetir)
+-f, --key-file ARQ     Arquivo com chave(s) pública(s)
+-U, --key-url URL      URL com chave(s) pública(s)
+-p, --port PORTA       Porta do SSH (padrão: mantém a atual)
+-a, --allow-users      Libera SSH SOMENTE para este usuário (AllowUsers)
+-y, --yes              Sem perguntas e sem teste de confirmação (automação)
+-h, --help             Ajuda
+```
+
+Exemplo sem perguntas sobre a chave:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MrPamonha/Automa-o-Linux-Debian13/main/ssh-hardening.sh) \
+  --user ricardo --key "ssh-ed25519 AAAA... ricardo@termius"
+```
+
+### Desfazer manualmente
+
+```bash
+rm /etc/ssh/sshd_config.d/00-hardening.conf && systemctl restart ssh
+```
+
+Em último caso, acesse pelo console do Proxmox (`qm terminal <vmid>` / `pct enter <ctid>`).
