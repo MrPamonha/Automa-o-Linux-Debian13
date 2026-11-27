@@ -27,6 +27,10 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Usuário comum que chamou o script: via sudo (SUDO_USER) ou via "su -" (logname)
+TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null)}"
+[ "$TARGET_USER" = "root" ] && TARGET_USER=""
+
 # Função para log de progresso
 log_info() {
     echo -e "\n${BLUE}[INFO]${NC} $1"
@@ -47,7 +51,13 @@ configure_datetime() {
     
     # Prompt com timeout de 10 segundos
     echo -e "${CYAN}Defina o fuso horário (ex: America/Sao_Paulo, America/Manaus, etc.)${NC}"
-    read -t 10 -p "Pressione Enter para usar o padrão [$DEFAULT_TZ]: " USER_TZ
+    # Lê do terminal (/dev/tty) para funcionar também via "curl | bash";
+    # sem terminal (automação), segue com o padrão.
+    USER_TZ=""
+    if (exec </dev/tty) 2>/dev/null; then
+        read -t 10 -p "Pressione Enter para usar o padrão [$DEFAULT_TZ]: " USER_TZ </dev/tty || true
+        echo
+    fi
     USER_TZ=${USER_TZ:-$DEFAULT_TZ}
     
     if timedatectl set-timezone "$USER_TZ" 2>/dev/null; then
@@ -66,23 +76,30 @@ configure_datetime() {
     timedatectl status | grep -E "Local time|Universal time|Time zone|System clock synchronized|NTP service"
 }
 
-# 2. Configurar fontes do apt (/etc/apt/sources.list)
+# 2. Configurar fontes do apt (formato antigo sources.list e/ou deb822 debian.sources)
 configure_sources() {
     log_info "Configurando repositórios (contrib, non-free, non-free-firmware)..."
-    
-    # Backup de segurança
-    if [ ! -f /etc/apt/sources.list.bak ]; then
-        cp /etc/apt/sources.list /etc/apt/sources.list.bak
-        log_info "Backup do sources.list criado em /etc/apt/sources.list.bak"
+    local COMPS="main contrib non-free non-free-firmware"
+    local changed=0
+
+    # Formato antigo: /etc/apt/sources.list (só linhas do debian.org, para não mexer em repositórios de terceiros)
+    if [ -f /etc/apt/sources.list ] && grep -qE '^\s*deb(-src)?\s' /etc/apt/sources.list; then
+        [ -f /etc/apt/sources.list.bak ] || cp /etc/apt/sources.list /etc/apt/sources.list.bak
+        sed -i -E "/debian\.org/ s#^(\s*deb(-src)?\s+(\[[^]]*\]\s+)?\S+\s+\S+)\s+.*\$#\1 ${COMPS}#" /etc/apt/sources.list
+        changed=1
     fi
-    
-    # Garantir contrib, non-free e non-free-firmware para o Debian 13 Trixie
-    # Verifica se já contém "contrib" para evitar duplicar
-    if ! grep -q "contrib" /etc/apt/sources.list; then
-        sed -i 's/ main/ main contrib non-free non-free-firmware/g' /etc/apt/sources.list
-        log_success "Repositórios contrib, non-free e non-free-firmware adicionados."
+
+    # Formato deb822: /etc/apt/sources.list.d/debian.sources
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+        [ -f /root/debian.sources.bak ] || cp /etc/apt/sources.list.d/debian.sources /root/debian.sources.bak
+        sed -i -E "s#^Components:.*\$#Components: ${COMPS}#" /etc/apt/sources.list.d/debian.sources
+        changed=1
+    fi
+
+    if [ "$changed" = 1 ]; then
+        log_success "Componentes ajustados para: ${COMPS}"
     else
-        log_success "Repositórios já parecem estar configurados."
+        log_warning "Nenhum arquivo de repositório do Debian encontrado; nada alterado."
     fi
 }
 
@@ -195,10 +212,10 @@ EOF
     setup_user_bashrc "/etc/skel/.bashrc" "false"
     
     # Aplicar para o usuário comum existente que chamou o script se houver (ex: logado via SSH)
-    if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
-        setup_user_bashrc "/home/$SUDO_USER/.bashrc" "false"
-        chown "$SUDO_USER:$SUDO_USER" "/home/$SUDO_USER/.bashrc"
-        [ -f "/home/$SUDO_USER/.bashrc.bak" ] && chown "$SUDO_USER:$SUDO_USER" "/home/$SUDO_USER/.bashrc.bak"
+    if [ -n "$TARGET_USER" ] && [ -d "/home/$TARGET_USER" ]; then
+        setup_user_bashrc "/home/$TARGET_USER/.bashrc" "false"
+        chown "$TARGET_USER:" "/home/$TARGET_USER/.bashrc"
+        [ -f "/home/$TARGET_USER/.bashrc.bak" ] && chown "$TARGET_USER:" "/home/$TARGET_USER/.bashrc.bak"
     fi
     
     log_success "Customizações de terminal aplicadas para root e usuários normais."
@@ -236,9 +253,9 @@ EOF
     write_vimrc "/etc/skel/.vimrc"
     
     # Criar .vimrc para o usuário comum atual (se existir)
-    if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
-        write_vimrc "/home/$SUDO_USER/.vimrc"
-        chown "$SUDO_USER:$SUDO_USER" "/home/$SUDO_USER/.vimrc"
+    if [ -n "$TARGET_USER" ] && [ -d "/home/$TARGET_USER" ]; then
+        write_vimrc "/home/$TARGET_USER/.vimrc"
+        chown "$TARGET_USER:" "/home/$TARGET_USER/.vimrc"
     fi
     
     log_success "Vim configurado com sucesso."
