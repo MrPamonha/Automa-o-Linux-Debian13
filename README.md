@@ -5,7 +5,7 @@ Dois scripts para rodar em **toda máquina Debian 13 "Trixie" nova** (VM ou cont
 | # | Script | O que faz |
 |---|---|---|
 | 1 | `setup.sh` | Relógio/NTP, repositórios, atualização, pacotes essenciais, Bash e Vim (recomendações do blog do Remontti) |
-| 2 | `ssh-hardening.sh` | Usuário nominal com chave, SSH só por chave, root bloqueado no SSH e acessível via `sudo -i` |
+| 2 | `ssh-hardening.sh` | Usuário nominal só com chave (sem senha), root bloqueado no SSH e acessível via `sudo -i` sem senha |
 
 ## Uso rápido (como `root`)
 
@@ -15,7 +15,7 @@ apt update && apt install -y curl
 # 1) Pós-instalação
 curl -fsSL https://raw.githubusercontent.com/MrPamonha/Automa-o-Linux-Debian13/main/setup.sh | bash
 
-# 2) SSH (pergunta usuário, senha do sudo e chave)
+# 2) SSH (pergunta usuário e chave)
 bash <(curl -fsSL https://raw.githubusercontent.com/MrPamonha/Automa-o-Linux-Debian13/main/ssh-hardening.sh)
 ```
 
@@ -49,13 +49,15 @@ Também dá para copiar os arquivos para a máquina e rodar `bash setup.sh` / `b
 | Etapa | Detalhe |
 |---|---|
 | Pacotes | Garante `openssh-server` e `sudo` |
-| Usuário | Cria o usuário nominal (se não existir), coloca no grupo `sudo` e pede a senha dele — usada **só no `sudo -i`**, nunca no SSH |
+| Usuário | Cria o usuário nominal (se não existir), coloca no grupo `sudo`, libera `sudo` **sem senha** (`/etc/sudoers.d/90-<usuário>`, validado com `visudo`) e **trava a senha** dele — só entra por chave |
 | Chaves | Aceita chave colada, arquivo ou URL (ex.: `https://github.com/USUARIO.keys`); valida cada uma com `ssh-keygen` e não duplica |
 | sshd | Grava `/etc/ssh/sshd_config.d/00-hardening.conf` (prioridade sobre os demais) e valida com `sshd -t` antes de aplicar |
 | Serviço | Desativa o `ssh.socket` e usa `ssh.service` com **restart** (o `reload` já derrubou o sshd em container) |
 | Teste | Pede para você testar numa sessão nova e digitar `ok` em até 180 s — **sem confirmação, desfaz sozinho** |
 
 **Configuração aplicada:** `PermitRootLogin no`, `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `AuthenticationMethods publickey`, `MaxAuthTries 3`, `LoginGraceTime 30`, `X11Forwarding no`, `ClientAliveInterval 300`.
+
+> **Atenção:** no padrão, quem tem a chave SSH do usuário vira root sem senha. Proteja a chave privada (senha na chave / Termius com bloqueio). Para exigir senha no `sudo`, use `--sudo-password`.
 
 ### Proteções contra se trancar fora
 - Sem nenhuma chave válida no `authorized_keys`, **não altera nada** no SSH.
@@ -73,6 +75,7 @@ Também dá para copiar os arquivos para a máquina e rodar `bash setup.sh` / `b
 -U, --key-url URL      URL com chave(s) pública(s)
 -p, --port PORTA       Porta do SSH (padrão: mantém a atual)
 -a, --allow-users      Libera SSH SOMENTE para este usuário (AllowUsers)
+-s, --sudo-password    sudo pede a senha do usuário (padrão: sudo sem senha e senha travada)
 -y, --yes              Sem perguntas e sem teste de confirmação (automação)
 -h, --help             Ajuda
 ```

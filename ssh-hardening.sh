@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SSH Hardening para Debian 13 Trixie
-# Usuário nominal + acesso só por chave + root só via "sudo -i"
+# Usuário nominal + acesso só por chave + root via "sudo -i" (sem senha)
 # Repositório: github.com/MrPamonha/Automa-o-Linux-Debian13
 # ==============================================================================
 #
@@ -19,6 +19,7 @@
 #   -U, --key-url URL      URL com chave(s) pública(s) (ex.: https://github.com/USUARIO.keys)
 #   -p, --port PORTA       Porta do SSH (padrão: mantém a atual, normalmente 22)
 #   -a, --allow-users      Libera SSH SOMENTE para este usuário (AllowUsers)
+#   -s, --sudo-password    sudo pede a senha do usuário (padrão: sudo sem senha e senha travada)
 #   -y, --yes              Sem perguntas e sem teste de confirmação (automação)
 #   -h, --help             Mostra esta ajuda
 # ==============================================================================
@@ -41,7 +42,7 @@ banner() {
     echo -e "${PURPLE}======================================================${NC}"
     echo -e "${CYAN}        DEBIAN 13 TRIXIE - SSH HARDENING              ${NC}"
     echo -e "${PURPLE}======================================================${NC}"
-    echo -e "${BLUE}Usuário nominal, acesso só por chave e root via sudo.${NC}"
+    echo -e "${BLUE}Usuário nominal, acesso só por chave e root via sudo -i.${NC}"
     echo -e "${PURPLE}======================================================${NC}"
 }
 
@@ -54,6 +55,7 @@ Uso: ssh-hardening.sh [opções]
   -U, --key-url URL      URL com chave(s) pública(s) (ex.: https://github.com/USUARIO.keys)
   -p, --port PORTA       Porta do SSH (padrão: mantém a atual)
   -a, --allow-users      Libera SSH SOMENTE para este usuário (AllowUsers)
+  -s, --sudo-password    sudo pede a senha do usuário (padrão: sudo sem senha e senha travada)
   -y, --yes              Sem perguntas e sem teste de confirmação (automação)
   -h, --help             Mostra esta ajuda
 EOF
@@ -74,7 +76,7 @@ ask() {        # ask "Pergunta" "padrão" -> REPLY
 }
 
 # --------------------------------------------------------------- argumentos ---
-TARGET_USER=""; KEYS=(); KEY_FILES=(); KEY_URLS=(); SSH_PORT=""; ALLOW_ONLY=0; ASSUME_YES=0
+TARGET_USER=""; KEYS=(); KEY_FILES=(); KEY_URLS=(); SSH_PORT=""; ALLOW_ONLY=0; ASSUME_YES=0; SUDO_PASSWORD=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -u|--user)        TARGET_USER="$2"; shift 2 ;;
@@ -83,6 +85,7 @@ while [ $# -gt 0 ]; do
         -U|--key-url)     KEY_URLS+=("$2"); shift 2 ;;
         -p|--port)        SSH_PORT="$2"; shift 2 ;;
         -a|--allow-users) ALLOW_ONLY=1; shift ;;
+        -s|--sudo-password) SUDO_PASSWORD=1; shift ;;
         -y|--yes)         ASSUME_YES=1; shift ;;
         -h|--help)        usage ;;
         *) die "Opção desconhecida: $1 (use --help)" ;;
@@ -127,20 +130,36 @@ fi
 usermod -aG sudo "$TARGET_USER" && log_success "$TARGET_USER no grupo sudo."
 USER_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 
-# O sudo pede a senha do usuário: garantir que ela exista
-pw_state="$(passwd -S "$TARGET_USER" 2>/dev/null | awk '{print $2}')"
-if [ "$pw_state" = "P" ]; then
-    log_success "Usuário já tem senha (usada só no sudo, não no SSH)."
-elif [ "$HAS_TTY" = 1 ] && [ "$ASSUME_YES" != 1 ]; then
-    log_info "Defina a senha de $TARGET_USER (usada só no ${BOLD}sudo -i${NC}, nunca no SSH):"
-    tries=0
-    until passwd "$TARGET_USER" </dev/tty; do
-        tries=$((tries+1))
-        [ "$tries" -ge 3 ] && { log_warning "Senha não definida: rode 'passwd $TARGET_USER' depois (o sudo depende dela)."; break; }
-        log_warning "Tente de novo ($tries/3)."
-    done
+SUDOERS_FILE="/etc/sudoers.d/90-${TARGET_USER}"
+if [ "$SUDO_PASSWORD" = 1 ]; then
+    # Modo --sudo-password: o sudo pede a senha do usuário
+    rm -f "$SUDOERS_FILE"
+    pw_state="$(passwd -S "$TARGET_USER" 2>/dev/null | awk '{print $2}')"
+    if [ "$pw_state" = "P" ]; then
+        log_success "Usuário já tem senha (usada só no sudo, não no SSH)."
+    elif [ "$HAS_TTY" = 1 ] && [ "$ASSUME_YES" != 1 ]; then
+        log_info "Defina a senha de $TARGET_USER (usada só no ${BOLD}sudo -i${NC}, nunca no SSH):"
+        tries=0
+        until passwd "$TARGET_USER" </dev/tty; do
+            tries=$((tries+1))
+            [ "$tries" -ge 3 ] && { log_warning "Senha não definida: rode 'passwd $TARGET_USER' depois (o sudo depende dela)."; break; }
+            log_warning "Tente de novo ($tries/3)."
+        done
+    else
+        log_warning "$TARGET_USER sem senha: o sudo não vai funcionar até rodar 'passwd $TARGET_USER'."
+    fi
 else
-    log_warning "$TARGET_USER sem senha: o sudo não vai funcionar até rodar 'passwd $TARGET_USER'."
+    # Padrão: usuário sem senha (travada) e sudo sem senha. Quem tem a chave SSH vira root.
+    echo "$TARGET_USER ALL=(ALL:ALL) NOPASSWD: ALL" > "${SUDOERS_FILE}.tmp"
+    if visudo -cf "${SUDOERS_FILE}.tmp" &>/dev/null; then
+        install -m 440 -o root -g root "${SUDOERS_FILE}.tmp" "$SUDOERS_FILE"
+        log_success "sudo sem senha para $TARGET_USER (${DIM}$SUDOERS_FILE${NC})."
+    else
+        rm -f "${SUDOERS_FILE}.tmp"; die "Regra do sudoers inválida; nada foi alterado no sudo."
+    fi
+    rm -f "${SUDOERS_FILE}.tmp"
+    passwd -l "$TARGET_USER" &>/dev/null
+    log_success "Senha de $TARGET_USER travada: entra só por chave (console e su também não aceitam senha)."
 fi
 
 # ----------------------------------------------------------------- 3. chaves --
@@ -275,9 +294,10 @@ fi
 echo -e "\n${GREEN}======================================================${NC}"
 echo -e "${GREEN}    SSH BLINDADO COM SUCESSO!                         ${NC}"
 echo -e "${GREEN}======================================================${NC}"
+if [ "$SUDO_PASSWORD" = 1 ]; then SUDO_DESC="pede a senha de $TARGET_USER"; else SUDO_DESC="sem senha"; fi
 echo -e "  Usuário ......: ${BOLD}$TARGET_USER${NC} (grupo sudo)"
 echo -e "  Acesso .......: ${BOLD}só chave${NC}, porta ${BOLD}${PORT_NOW:-22}${NC}, root bloqueado no SSH"
-echo -e "  Virar root ...: ${BOLD}sudo -i${NC}"
+echo -e "  Virar root ...: ${BOLD}sudo -i${NC} ($SUDO_DESC)"
 echo -e "  Emergência ...: console do Proxmox (qm terminal / pct enter)"
 echo -e "  Desfazer .....: ${DIM}rm $DROPIN && systemctl restart ssh${NC}"
 echo -e "${GREEN}======================================================${NC}"
